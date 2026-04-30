@@ -113,60 +113,123 @@ def monthly_avg(df, column):
               .reset_index()
               .assign(month=lambda x: x['month'].astype(str)))
 def forecast_weather(df, days=7):
-    """Forecast using moving average + slight trend"""
+    """
+    Improved forecast using seasonal weighted moving average
+    Accounts for seasonal patterns and recent trends
+    """
     df = df.copy()
     df = df.sort_values('last_updated')
+    df['month'] = df['last_updated'].dt.month
+    df['day_of_year'] = df['last_updated'].dt.dayofyear
 
     forecasts = {}
+    last_date = df['last_updated'].max()
+
     for col in ['temperature_celsius', 'humidity', 'wind_kph']:
-        series = df[col].dropna()
-        if len(series) < 7:
+        series = df[['last_updated', 'month', 'day_of_year', col]].dropna()
+        if len(series) < 30:
             continue
 
-        # Use last 30 days moving average as base
-        recent = series.tail(30).values
-        base = np.mean(recent)
-        std = np.std(recent)
-
-        # Calculate trend from last 60 days
-        last_60 = series.tail(60).values
-        x = np.arange(len(last_60))
-        coeffs = np.polyfit(x, last_60, 1)
-        trend = coeffs[0]  # change per day
-
-        # Generate forecast with trend + seasonal variation
-        last_date = df['last_updated'].max()
         future = []
         for i in range(1, days + 1):
             future_date = last_date + pd.Timedelta(days=i)
-            # Add slight sinusoidal variation to make it look realistic
-            variation = std * 0.3 * np.sin(i * np.pi / 3.5)
-            predicted = round(float(base + trend * i + variation), 1)
+            future_month = future_date.month
+            future_doy = future_date.timetuple().tm_yday
+
+            # Get historical data for same month
+            same_month = series[series['month'] == future_month][col]
+
+            # Get recent 30 days data
+            recent_30 = series.tail(30)[col]
+
+            # Get recent 7 days data
+            recent_7 = series.tail(7)[col]
+
+            if len(same_month) == 0:
+                base = series[col].mean()
+            else:
+                # Weighted average:
+                # 50% weight to same month historical average
+                # 30% weight to recent 30 days average
+                # 20% weight to recent 7 days average
+                seasonal_avg = same_month.mean()
+                recent_30_avg = recent_30.mean()
+                recent_7_avg = recent_7.mean()
+
+                base = (0.5 * seasonal_avg +
+                        0.3 * recent_30_avg +
+                        0.2 * recent_7_avg)
+
+            # Add small daily variation based on historical std
+            daily_std = series[col].std()
+            variation = daily_std * 0.1 * np.sin(i * np.pi / 3.5)
+
+            predicted = round(float(base + variation), 1)
             future.append((future_date, predicted))
 
         forecasts[col] = future
 
     return forecasts
 
+
 def forecast_for_date(df, target_date):
-    """Forecast weather for a specific date"""
+    """
+    Improved forecast for a specific date
+    Uses seasonal patterns from historical data
+    """
     df = df.copy()
     df = df.sort_values('last_updated')
-    df['day_num'] = (df['last_updated'] - df['last_updated'].min()).dt.days
     target = pd.to_datetime(target_date)
-    target_day = (target - df['last_updated'].min()).days
+    target_month = target.month
 
     results = {}
     for col in ['temperature_celsius', 'humidity', 'wind_kph', 'pressure_mb']:
-        x = df['day_num'].values
-        y = df[col].values
-        mask = ~np.isnan(y)
-        x, y = x[mask], y[mask]
-        if len(x) < 2:
+        series = df[['last_updated', col]].dropna()
+        if len(series) < 7:
             continue
-        coeffs = np.polyfit(x, y, 1)
-        poly = np.poly1d(coeffs)
-        results[col] = round(float(poly(target_day)), 1)
+
+        df_col = series.copy()
+        df_col['month'] = df_col['last_updated'].dt.month
+
+        # Same month historical average
+        same_month = df_col[df_col['month'] == target_month][col]
+
+        # Recent data
+        recent_30 = df_col.tail(30)[col]
+        recent_7  = df_col.tail(7)[col]
+
+        if len(same_month) == 0:
+            predicted = round(float(df_col[col].mean()), 1)
+        else:
+            seasonal_avg   = same_month.mean()
+            recent_30_avg  = recent_30.mean()
+            recent_7_avg   = recent_7.mean()
+
+            # How far in the future is the target date?
+            days_ahead = (target - df['last_updated'].max()).days
+
+            # For near future give more weight to recent data
+            # For far future give more weight to seasonal data
+            if days_ahead <= 7:
+                predicted = round(float(
+                    0.3 * seasonal_avg +
+                    0.3 * recent_30_avg +
+                    0.4 * recent_7_avg
+                ), 1)
+            elif days_ahead <= 30:
+                predicted = round(float(
+                    0.4 * seasonal_avg +
+                    0.4 * recent_30_avg +
+                    0.2 * recent_7_avg
+                ), 1)
+            else:
+                predicted = round(float(
+                    0.7 * seasonal_avg +
+                    0.2 * recent_30_avg +
+                    0.1 * recent_7_avg
+                ), 1)
+
+        results[col] = predicted
 
     return results
 def weather_health_index(df, group_by='country'):

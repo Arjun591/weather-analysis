@@ -18,7 +18,7 @@ def insert_data(df):
     db = get_connection()
     collection = db['weather_data']
     if collection.count_documents({}) > 0:
-        print("✅ Data already exists in Atlas, skipping insert")
+        print("Data already exists in Atlas, skipping insert")
         return
     print("📦 Inserting data into MongoDB Atlas...")
     records = df.to_dict('records')
@@ -26,8 +26,8 @@ def insert_data(df):
     for i in range(0, len(records), batch_size):
         batch = records[i:i + batch_size]
         collection.insert_many(batch)
-        print(f"  ✅ Inserted {min(i + batch_size, len(records))}/{len(records)} records")
-    print("🎉 All data inserted into MongoDB Atlas!")
+        print(f" Inserted {min(i + batch_size, len(records))}/{len(records)} records")
+    print("All data inserted into MongoDB Atlas!")
     # Clear cache after new insert
     if os.path.exists(CACHE_FILE):
         os.remove(CACHE_FILE)
@@ -35,16 +35,16 @@ def insert_data(df):
 def fetch_data():
     # Check local cache first
     if os.path.exists(CACHE_FILE):
-        print("📦 Loading from local cache...")
+        print("Loading from local cache...")
         with open(CACHE_FILE, 'rb') as f:
             df = pickle.load(f)
-        print(f"✅ Loaded {len(df)} records from cache")
+        print(f"Loaded {len(df)} records from cache")
         return df
 
     # Fetch from Atlas
     db = get_connection()
     collection = db['weather_data']
-    print("📦 Fetching data from MongoDB Atlas...")
+    print("Fetching data from MongoDB Atlas...")
     df = pd.DataFrame(list(collection.find()))
     if '_id' in df.columns:
         df.drop('_id', axis=1, inplace=True)
@@ -55,13 +55,12 @@ def fetch_data():
     df['location_name'] = df['location_name'].str.strip()
     df['condition_text'] = df['condition_text'].str.strip()
 
-    print(f"✅ Fetched {len(df)} records from Atlas")
+    print(f"Fetched {len(df)} records from Atlas")
 
-    # Save to cache
-    print("💾 Saving to local cache...")
+    print("Saving to local cache...")
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(df, f)
-    print("✅ Cache saved!")
+    print("Cache saved!")
 
     return df
 
